@@ -16,10 +16,19 @@ except ImportError:
     # OpenCV 3.x does not have cv2.cv submodule
     USE_CV2 = False
 
-def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsForBandPass, lowFreq, highFreq):
+def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsForBandPass, lowFreq, highFreq, accel='cpu'):
+    
+    use_cuda = (accel == 'cuda')
+    if use_cuda:
+        import cupy as cp
+        xp = cp
+        print("[CUDA] GPU Acceleration Enabled")
+    else:
+        xp = np
+        print("[CPU] Standard Computation Enabled")
 
     # initialize the steerable complex pyramid
-    steer = Steerable(5)
+    steer = Steerable(5, use_cuda=use_cuda)
     pyArr = Pyramid2arr(steer)
 
     print("Reading:", vidFname, end=" ")
@@ -43,18 +52,72 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
 
     if np.isnan(fps):
         fps = 30
+    import time
+    import platform
+    import cpuinfo
+    from tqdm import tqdm
 
-    print(' %d frames' % vidFrames, end="")
-    print(' (%d x %d)' % (width, height), end="")
-    print(' FPS:%d' % fps)
+    # Gather System Info
+    cpu_info = cpuinfo.get_cpu_info()
+    os_info = platform.system() + " " + platform.release()
+    py_ver = platform.python_version()
+    
+    # Calculate Memory (approximate available RAM via psutil if available, fallback otherwise)
+    try:
+        import psutil
+        ram_gb = round(psutil.virtual_memory().total / (1024.**3), 1)
+        ram_str = f"{ram_gb} GB"
+    except ImportError:
+        ram_str = "Unknown (psutil not installed)"
 
+    print("="*60)
+    print("  Hardware Information")
+    print("="*60)
+    print(f"  OS           : {os_info}")
+    print(f"  Python       : {py_ver}")
+    print(f"  Accel Mode   : {accel.upper()}")
+    
+    if use_cuda:
+        try:
+            # Try getting GPU info from CuPy or nvidia-smi
+            gpu_name = xp.cuda.runtime.getDeviceProperties(0)['name'].decode()
+            cuda_ver = xp.cuda.runtime.runtimeGetVersion()
+            # approximate memory
+            free_mem, total_mem = xp.cuda.runtime.memGetInfo()
+            gpu_mem = round(total_mem / (1024.**3), 1)
+            print(f"  GPU          : {gpu_name}")
+            print(f"  GPU Memory   : {gpu_mem} GB")
+            print(f"  CUDA Version : {cuda_ver}")
+        except Exception:
+            print("  GPU          : Unknown CUDA Device")
+    else:
+        num_threads = args.threads if 'args' in globals() and hasattr(args, 'threads') and args.threads > 0 else 1
+        print(f"  CPU          : {cpu_info.get('brand_raw', 'Unknown')}")
+        print(f"  CPU Cores    : {cpu_info.get('count', 'Unknown')} logical")
+        print(f"  RAM          : {ram_str}")
+        print(f"  Threads Used : {num_threads}")
+    print("="*60)
+
+    print("\n" + "="*60)
+    print("  Input Video Information")
+    print("="*60)
+    print(f"  File         : {os.path.basename(vidFname)}")
+    print(f"  Resolution   : {width} x {height}")
+    print(f"  FPS          : {fps:.2f}")
+    
     # video Writer
     fourcc = func_fourcc(*'MJPG')
     vidWriter = cv2.VideoWriter(vidFnameOut, fourcc, int(fps), (width,height), 1)
-    print('Writing:', vidFnameOut)
-
+    
     # how many frames
     nrFrames = min(vidFrames, maxFrames)
+    duration = nrFrames / fps if fps > 0 else 0
+    print(f"  Frames       : {nrFrames}")
+    print(f"  Duration     : {duration:.2f} s")
+    print("="*60 + "\n")
+
+    print("Starting EVM processing...")
+    start_time = time.time()
 
     # setup temporal filter
     filter = IdealFilterWindowed(windowSize, lowFreq, highFreq, fps=fpsForBandPass, outfun=lambda x: x[0])
@@ -68,11 +131,9 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
 
     if num_threads <= 1:
         # ---- Single Threaded Fallback ----
-        print('FrameNr(Seq):', end=" ")
+        pbar = tqdm(total=nrFrames+windowSize, desc=f"Video Processing ({accel.upper()})", unit="frames")
         for frameNr in range( nrFrames + windowSize ):
-            if frameNr % 10 == 0:
-                print(frameNr, end=" ", flush=True)
-
+            pbar.update(1)
             if frameNr < nrFrames:
                 ret, im = vidReader.read()
                 if not ret or im is None:
@@ -82,12 +143,15 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                     grayIm = cv2.cvtColor(im, cv2.COLOR_RGB2GRAY)
                 else:
                     grayIm = im
+                    
+                if use_cuda:
+                    grayIm = xp.asarray(grayIm)
 
                 coeff = steer.buildSCFpyr(grayIm)
                 arr = pyArr.p2a(coeff)
-                phases = np.angle(arr)
+                phases = xp.angle(arr)
 
-                filter.update([phases])
+                filter.update(xp.asarray([phases]))
 
                 try:
                     filteredPhases = filter.next()
@@ -95,12 +159,15 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                     continue
 
                 magnifiedPhases = (phases - filteredPhases) + filteredPhases*factor
-                newArr = np.abs(arr) * np.exp(magnifiedPhases * 1j)
+                newArr = xp.abs(arr) * xp.exp(magnifiedPhases * 1j)
                 newCoeff = pyArr.a2p(newArr)
                 out = steer.reconSCFpyr(newCoeff)
 
                 out[out>255] = 255
                 out[out<0] = 0
+                
+                if use_cuda:
+                    out = xp.asnumpy(out)
                 
                 rgbIm = np.empty( (out.shape[0], out.shape[1], 3 ) )
                 rgbIm[:,:,0] = out
@@ -108,13 +175,17 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                 rgbIm[:,:,2] = out
                 
                 vidWriter.write(cv2.convertScaleAbs(rgbIm).astype(np.uint8))
+        pbar.close()
     else:
         # ---- Multi-Threaded Pipeline ----
         from concurrent.futures import ThreadPoolExecutor
         import queue
         import threading
         
-        print(f'FrameNr(Parallel x{num_threads}):', end=" ")
+        mode_str = f"{accel.upper()} parallel" if accel == 'cpu' else f"{accel.upper()}"
+        pbar_dec = tqdm(total=nrFrames, desc=f"Pyramids Generation ({mode_str})", position=0)
+        pbar_fil = tqdm(total=nrFrames, desc=f"Pyramids Filtering", position=1)
+        pbar_rec = tqdm(total=nrFrames, desc=f"Video Reconstruction ({mode_str})", position=2)
         
         # Queues
         q_raw = queue.Queue(maxsize=windowSize*2)            # (frameNr, grayIm)
@@ -130,10 +201,14 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                     q_raw.task_done()
                     break
                 f_nr, gray_img = item
+                if use_cuda:
+                    gray_img = xp.asarray(gray_img)
+                    
                 coeff = steer.buildSCFpyr(gray_img)
                 arr = pyArr.p2a(coeff)
-                phases = np.angle(arr)
+                phases = xp.angle(arr)
                 q_phases.put((f_nr, phases, arr))
+                pbar_dec.update(1)
                 q_raw.task_done()
 
         # Worker 2: Consumer (Reconstruct)
@@ -144,11 +219,14 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                     q_filter_out.task_done()
                     break
                 f_nr, mag_phases, arr = item
-                newArr = np.abs(arr) * np.exp(mag_phases * 1j)
+                newArr = xp.abs(arr) * xp.exp(mag_phases * 1j)
                 newCoeff = pyArr.a2p(newArr)
                 out = steer.reconSCFpyr(newCoeff)
                 out[out>255] = 255
                 out[out<0] = 0
+                
+                if use_cuda:
+                    out = xp.asnumpy(out)
                 
                 rgbIm = np.empty( (out.shape[0], out.shape[1], 3 ) )
                 rgbIm[:,:,0] = out
@@ -191,6 +269,7 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                     vidWriter.write(buf.pop(next_write_f))
                     next_write_f += 1
                     written_count += 1
+                    pbar_rec.update(1)
                 q_reconstruct.task_done()
                 
         writer_thr = threading.Thread(target=writer_loop)
@@ -232,7 +311,7 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
             while filter_idx in phases_buffer:
                 p, a = phases_buffer.pop(filter_idx)
                 
-                filter.update([p])
+                filter.update(xp.asarray([p]))
                 try:
                     filt_p = filter.next()
                     mag_phases = (p - filt_p) + filt_p * factor
@@ -241,8 +320,7 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
                     # Filter is filling up its sliding window
                     frames_to_write -= 1 
                 
-                if filter_idx % 10 == 0:
-                    print(filter_idx, end=" ", flush=True)
+                pbar_fil.update(1)
                 filter_idx += 1
                 made_progress = True
 
@@ -259,11 +337,24 @@ def phaseBasedMagnify(vidFname, vidFnameOut, maxFrames, windowSize, factor, fpsF
         
         q_reconstruct.put(None)
         writer_thr.join()
+        
+        pbar_rec.n = nrFrames
+        pbar_rec.refresh()
+        pbar_dec.close()
+        pbar_fil.close()
+        pbar_rec.close()
 
-    # free the video reader/writer
     vidReader.release()
     vidWriter.release()
-    print("\n[Done] Outputs saved to", vidFnameOut)
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    
+    print("\n" + "="*60)
+    print("  Processing Complete!")
+    print(f"  Total Time   : {total_time:.2f} s ({total_time/60:.2f} min)")
+    print("="*60 + "\n")
+    print(f"Video saved to: {vidFnameOut}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Phase-Based Video Motion Magnification (EVM Python)")
@@ -276,7 +367,7 @@ if __name__ == '__main__':
     parser.add_argument('-mf', '--max_frames', type=int, default=60000, help="Max frames to process")
     parser.add_argument('-f', '--fps', type=int, default=600, help="FPS for bandpass. -1 for video native FPS.")
     parser.add_argument('-t', '--threads', type=int, default=1, help="Number of CPU workers for multithreading")
-    parser.add_argument('-acc', '--accel', choices=['cpu', 'cuda'], default='cpu', help="Acceleration: cpu or cuda (Reserved for future GPU mode)")
+    parser.add_argument('-acc', '--accel', choices=['cpu', 'cuda'], default='cpu', help="Acceleration backend: cpu or cuda")
     
     args = parser.parse_args()
     
@@ -291,5 +382,6 @@ if __name__ == '__main__':
         factor=args.alpha,
         fpsForBandPass=args.fps,
         lowFreq=args.low_omega,
-        highFreq=args.high_omega
+        highFreq=args.high_omega,
+        accel=args.accel
     )

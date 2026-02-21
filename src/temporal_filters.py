@@ -42,10 +42,16 @@ class SlidingWindow (object):
                     break
     
     def update(self, data):
+        # Support dynamic cupy backend
+        xp = np
+        if type(data).__module__.startswith('cupy'):
+            import cupy as cp
+            xp = cp
+            
         if self.memory is None:
-            self.memory = np.asarray(data)
+            self.memory = xp.asarray(data)
         else:
-            self.memory = np.concatenate((self.memory, data), axis=0)
+            self.memory = xp.concatenate((self.memory, data), axis=0)
         
     def next(self):
         if self.memory is not None and self.memory.shape[0] >= self.size:
@@ -97,9 +103,21 @@ class IdealFilter (object):
             self.NFFT = data.shape[0]
             self.__set_mask()            
             
-        fft = fftpack.fft(data, axis=axis)        
+        xp = np
+        fft_engine = fftpack
+        if type(data).__module__.startswith('cupy'):
+            import cupy as cp
+            import cupyx.scipy.fft as cp_fft
+            xp = cp
+            fft_engine = cp_fft
+            
+            # Mask might have been created on NumPy, move it to CuPy once if necessary
+            if not type(self.mask).__module__.startswith('cupy'):
+                self.mask = cp.asarray(self.mask)
+            
+        fft = fft_engine.fft(data, axis=axis)        
         fft[self.mask] = 0   
-        return np.real( fftpack.ifft(fft, axis=axis) )        
+        return xp.real( fft_engine.ifft(fft, axis=axis) )
 
 class IdealFilterWindowed (SlidingWindow):
     

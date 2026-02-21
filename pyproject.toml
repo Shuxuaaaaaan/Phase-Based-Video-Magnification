@@ -5,9 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cupy-cuda12x>=14.0.1",
     "numpy>=2.4.2",
     "opencv-python>=4.13.0.92",
+    "py-cpuinfo>=9.0.0",
     "scipy>=1.17.0",
+    "tqdm>=4.67.3",
 ]
 
 [tool.uv.workspace]

@@ -42,9 +42,15 @@ class Pyramid2arr:
         
         if self._indices is None:
             self.init_coeff(coeff)
+            
+        # Detect backend from the input coeff array
+        xp = np
+        if type(coeff[0]).__module__.startswith('cupy'):
+            import cupy as cp
+            xp = cp
         
-        bandArray = np.hstack([ np.ravel( coeff[lvl][b] ) for lvl in self.levels for b in self.bands ])
-        bandArray = np.hstack((np.ravel(coeff[0]), bandArray, np.ravel(coeff[-1])))
+        bandArray = xp.hstack([ coeff[lvl][b].ravel() for lvl in self.levels for b in self.bands ])
+        bandArray = xp.hstack((coeff[0].ravel(), bandArray, coeff[-1].ravel()))
 
         return bandArray        
         
@@ -56,8 +62,13 @@ class Pyramid2arr:
         
         assert self._indices is not None, 'Initialize Pyramid2arr first with init_coeff() or p2a()'
 
+        xp = np
+        if type(bandArray).__module__.startswith('cupy'):
+            import cupy as cp
+            xp = cp
+
         # create iterator that convert array to images
-        it = (np.reshape(bandArray[istart:iend], size) for (istart,iend,size) in self._indices)
+        it = (xp.reshape(bandArray[istart:iend], size) for (istart,iend,size) in self._indices)
         
         coeffs = [next(it)]
         for lvl in self.levels:

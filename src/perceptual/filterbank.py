@@ -36,33 +36,43 @@ def visualize(coeff, normalize = True):
 	return out
 
 class Steerable:
-	def __init__(self, height = 5):
+	def __init__(self, height = 5, use_cuda = False):
 		"""
 		height is the total height, including highpass and lowpass
 		"""
 		self.nbands = 4
 		self.height = height
 		self.isSample = True
+		self.use_cuda = use_cuda
+		if self.use_cuda:
+			import cupy as cp
+			import cupyx.scipy.fft as cp_fft
+			self.xp = cp
+			self.fft = cp_fft
+		else:
+			self.xp = np
+			self.fft = np.fft
 
 	def buildSCFpyr(self, im):
+		# im is assumed to be already an xp array here (np or cp)
 		assert len(im.shape) == 2, 'Input image must be grayscale'
 
 		M, N = im.shape
 		log_rad, angle = self.base(M, N)
 		Xrcos, Yrcos = self.rcosFn(1, -0.5)
-		Yrcos = np.sqrt(Yrcos)
-		YIrcos = np.sqrt(1 - Yrcos*Yrcos)
+		Yrcos = self.xp.sqrt(Yrcos)
+		YIrcos = self.xp.sqrt(1 - Yrcos*Yrcos)
 
 		lo0mask = self.pointOp(log_rad, YIrcos, Xrcos)
 		hi0mask = self.pointOp(log_rad, Yrcos, Xrcos)
 
-		imdft = np.fft.fftshift(np.fft.fft2(im))
+		imdft = self.fft.fftshift(self.fft.fft2(im))
 		lo0dft = imdft * lo0mask
 
 		coeff = self.buildSCFpyrlevs(lo0dft, log_rad, angle, Xrcos, Yrcos, self.height - 1)
 
 		hi0dft = imdft * hi0mask
-		hi0 = np.fft.ifft2(np.fft.ifftshift(hi0dft))
+		hi0 = self.fft.ifft2(self.fft.ifftshift(hi0dft))
 
 		coeff.insert(0, hi0.real)
 
@@ -75,7 +85,7 @@ class Steerable:
 
 	def buildSCFpyrlevs(self, lodft, log_rad, angle, Xrcos, Yrcos, ht):
 		if (ht <=1):
-			lo0 = np.fft.ifft2(np.fft.ifftshift(lodft))
+			lo0 = self.fft.ifft2(self.fft.ifftshift(lodft))
 			coeff = [lo0.real]
 		
 		else:
@@ -85,26 +95,26 @@ class Steerable:
 			himask = self.pointOp(log_rad, Yrcos, Xrcos)
 
 			lutsize = 1024
-			Xcosn = np.pi * np.array(range(-(2*lutsize+1),(lutsize+2)))/lutsize
+			Xcosn = self.xp.pi * self.xp.arange(-(2*lutsize+1),(lutsize+2))/lutsize
 			order = self.nbands - 1
-			const = np.power(2, 2*order) * np.square(factorial(order)) / (self.nbands * factorial(2*order))
+			const = self.xp.power(2, 2*order) * self.xp.square(factorial(order)) / (self.nbands * factorial(2*order))
 
-			alpha = (Xcosn + np.pi) % (2*np.pi) - np.pi
-			Ycosn = 2*np.sqrt(const) * np.power(np.cos(Xcosn), order) * (np.abs(alpha) < np.pi/2)
+			alpha = (Xcosn + self.xp.pi) % (2*self.xp.pi) - self.xp.pi
+			Ycosn = 2*self.xp.sqrt(const) * self.xp.power(self.xp.cos(Xcosn), order) * (self.xp.abs(alpha) < self.xp.pi/2)
 
 			orients = []
 
 			for b in range(self.nbands):
-				anglemask = self.pointOp(angle, Ycosn, Xcosn + np.pi*b/self.nbands)
-				banddft = np.power(complex(0,-1), self.nbands - 1) * lodft * anglemask * himask
-				band = np.fft.ifft2(np.fft.ifftshift(banddft))
+				anglemask = self.pointOp(angle, Ycosn, Xcosn + self.xp.pi*b/self.nbands)
+				banddft = self.xp.power(complex(0,-1), self.nbands - 1) * lodft * anglemask * himask
+				band = self.fft.ifft2(self.fft.ifftshift(banddft))
 				orients.append(band)
 
 			# ================== Subsample lowpass ============================
-			dims = np.array(lodft.shape)
+			dims = self.xp.array(lodft.shape)
 			
-			lostart = np.ceil((dims+0.5)/2) - np.ceil((np.ceil((dims-0.5)/2)+0.5)/2)
-			loend = lostart + np.ceil((dims-0.5)/2)
+			lostart = self.xp.ceil((dims+0.5)/2) - self.xp.ceil((self.xp.ceil((dims-0.5)/2)+0.5)/2)
+			loend = lostart + self.xp.ceil((dims-0.5)/2)
 
 			lostart = lostart.astype(int)
 			loend = loend.astype(int)
@@ -112,7 +122,7 @@ class Steerable:
 			log_rad = log_rad[lostart[0]:loend[0], lostart[1]:loend[1]]
 			angle = angle[lostart[0]:loend[0], lostart[1]:loend[1]]
 			lodft = lodft[lostart[0]:loend[0], lostart[1]:loend[1]]
-			YIrcos = np.abs(np.sqrt(1 - Yrcos*Yrcos))
+			YIrcos = self.xp.abs(self.xp.sqrt(1 - Yrcos*Yrcos))
 			lomask = self.pointOp(log_rad, YIrcos, Xrcos)
 
 			lodft = lomask * lodft
@@ -125,7 +135,7 @@ class Steerable:
 	def reconSCFpyrLevs(self, coeff, log_rad, Xrcos, Yrcos, angle):
 
 		if (len(coeff) == 1):
-			return np.fft.fftshift(np.fft.fft2(coeff[0]))
+			return self.fft.fftshift(self.fft.fft2(coeff[0]))
 
 		else:
 
@@ -135,36 +145,36 @@ class Steerable:
 			himask = self.pointOp(log_rad, Yrcos, Xrcos)
 
 			lutsize = 1024
-			Xcosn = np.pi * np.array(range(-(2*lutsize+1),(lutsize+2)))/lutsize
+			Xcosn = self.xp.pi * self.xp.arange(-(2*lutsize+1),(lutsize+2))/lutsize
 			order = self.nbands - 1
-			const = np.power(2, 2*order) * np.square(factorial(order)) / (self.nbands * factorial(2*order))
-			Ycosn = np.sqrt(const) * np.power(np.cos(Xcosn), order)
+			const = self.xp.power(2, 2*order) * self.xp.square(factorial(order)) / (self.nbands * factorial(2*order))
+			Ycosn = self.xp.sqrt(const) * self.xp.power(self.xp.cos(Xcosn), order)
 
-			orientdft = np.zeros(coeff[0][0].shape)
+			orientdft = self.xp.zeros(coeff[0][0].shape, dtype=complex)
 
 			for b in range(self.nbands):
-				anglemask = self.pointOp(angle, Ycosn, Xcosn + np.pi* b/self.nbands)
-				banddft = np.fft.fftshift(np.fft.fft2(coeff[0][b]))
-				orientdft = orientdft + np.power(complex(0,1), order) * banddft * anglemask * himask
+				anglemask = self.pointOp(angle, Ycosn, Xcosn + self.xp.pi* b/self.nbands)
+				banddft = self.fft.fftshift(self.fft.fft2(coeff[0][b]))
+				orientdft = orientdft + self.xp.power(complex(0,1), order) * banddft * anglemask * himask
 
 			# ============== Lowpass component are upsampled and convoluted ============
-			dims = np.array(coeff[0][0].shape)
+			dims = self.xp.array(coeff[0][0].shape)
 			
-			lostart = (np.ceil((dims+0.5)/2) - np.ceil((np.ceil((dims-0.5)/2)+0.5)/2)).astype(np.int32)
-			loend = lostart + np.ceil((dims-0.5)/2).astype(np.int32) 
+			lostart = (self.xp.ceil((dims+0.5)/2) - self.xp.ceil((self.xp.ceil((dims-0.5)/2)+0.5)/2)).astype(self.xp.int32)
+			loend = lostart + self.xp.ceil((dims-0.5)/2).astype(self.xp.int32) 
 			lostart = lostart.astype(int)
 			loend = loend.astype(int)
 
 			nlog_rad = log_rad[lostart[0]:loend[0], lostart[1]:loend[1]]
 			nangle = angle[lostart[0]:loend[0], lostart[1]:loend[1]]
-			YIrcos = np.sqrt(np.abs(1 - Yrcos * Yrcos))
+			YIrcos = self.xp.sqrt(self.xp.abs(1 - Yrcos * Yrcos))
 			lomask = self.pointOp(nlog_rad, YIrcos, Xrcos)
 
 			nresdft = self.reconSCFpyrLevs(coeff[1:], nlog_rad, Xrcos, Yrcos, nangle)
 
-			res = np.fft.fftshift(np.fft.fft2(nresdft))
+			res = self.fft.fftshift(self.fft.fft2(nresdft))
 
-			resdft = np.zeros(dims, 'complex')
+			resdft = self.xp.zeros(dims.tolist(), dtype='complex128')
 			resdft[lostart[0]:loend[0], lostart[1]:loend[1]] = nresdft * lomask
 
 			return resdft + orientdft
@@ -178,49 +188,49 @@ class Steerable:
 		log_rad, angle = self.base(M, N)
 
 		Xrcos, Yrcos = self.rcosFn(1, -0.5)
-		Yrcos = np.sqrt(Yrcos)
-		YIrcos = np.sqrt(np.abs(1 - Yrcos*Yrcos))
+		Yrcos = self.xp.sqrt(Yrcos)
+		YIrcos = self.xp.sqrt(self.xp.abs(1 - Yrcos*Yrcos))
 
 		lo0mask = self.pointOp(log_rad, YIrcos, Xrcos)
 		hi0mask = self.pointOp(log_rad, Yrcos, Xrcos)
 
 		tempdft = self.reconSCFpyrLevs(coeff[1:], log_rad, Xrcos, Yrcos, angle)
 
-		hidft = np.fft.fftshift(np.fft.fft2(coeff[0]))
+		hidft = self.fft.fftshift(self.fft.fft2(coeff[0]))
 		outdft = tempdft * lo0mask + hidft * hi0mask
 
-		return np.fft.ifft2(np.fft.ifftshift(outdft)).real.astype(int)
+		return self.fft.ifft2(self.fft.ifftshift(outdft)).real.astype(int)
 
 
 	def base(self, m, n):
 		
-		x = np.linspace(-(m // 2)/(m / 2), (m // 2)/(m / 2) - (1 - m % 2)*2/m , num = m)
-		y = np.linspace(-(n // 2)/(n / 2), (n // 2)/(n / 2) - (1 - n % 2)*2/n , num = n)
+		x = self.xp.linspace(-(m // 2)/(m / 2), (m // 2)/(m / 2) - (1 - m % 2)*2/m , num = m)
+		y = self.xp.linspace(-(n // 2)/(n / 2), (n // 2)/(n / 2) - (1 - n % 2)*2/n , num = n)
 
-		xv, yv = np.meshgrid(y, x)
+		xv, yv = self.xp.meshgrid(y, x)
 
-		angle = np.arctan2(yv, xv)
+		angle = self.xp.arctan2(yv, xv)
 
-		rad = np.sqrt(xv**2 + yv**2)
+		rad = self.xp.sqrt(xv**2 + yv**2)
 		rad[m//2][n//2] = rad[m//2][n//2 - 1]
-		log_rad = np.log2(rad)
+		log_rad = self.xp.log2(rad)
 
 		return log_rad, angle
 
 	def rcosFn(self, width, position):
 		N = 256
-		X = np.pi * np.array(range(-N-1, 2))/2/N
+		X = self.xp.pi * self.xp.arange(-N-1, 2)/2/N
 
-		Y = np.cos(X)**2
+		Y = self.xp.cos(X)**2
 		Y[0] = Y[1]
 		Y[N+2] = Y[N+1]
 
-		X = position + 2*width/np.pi*(X + np.pi/4)
+		X = position + 2*width/self.xp.pi*(X + self.xp.pi/4)
 		return X, Y
 
 	def pointOp(self, im, Y, X):
-		out = np.interp(im.flatten(), X, Y)
-		return np.reshape(out, im.shape)
+		out = self.xp.interp(im.flatten(), X, Y)
+		return self.xp.reshape(out, im.shape)
 
 class SteerableNoSub(Steerable):
 
