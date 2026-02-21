@@ -5,9 +5,15 @@ __pycache__/
 # C extensions
 *.so
 
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
 # Distribution / packaging
 .Python
-env/
 build/
 develop-eggs/
 dist/
