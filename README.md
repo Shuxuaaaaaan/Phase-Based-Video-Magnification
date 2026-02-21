@@ -52,12 +52,14 @@ uv run python src/evm_phase.py -v <video_path> -s <saving_path> [options]
 | `--window_size` | `-ws` | Ideal filter sliding window / 理想滤波滑动窗口 | `30` |
 | `--max_frames` | `-mf` | Max frames to process / 最大处理帧数限制 | `60000` |
 | `--fps` | `-f` | FPS for bandpass (-1 for native) / 带通滤波帧率参考 | `600` |
+| `--threads` | `-t` | Number of CPU workers / 多线程并发核心数 | `1` |
+| `--accel` | `-acc` | Acceleration backend / 加速后端选项 `cpu`/`cuda` | `cpu` |
 
 ### Examples / 示例
 
 ```bash
-# Magnify string vibrations in a guitar video / 放大吉他拨弦的微波运动
-uv run python src/evm_phase.py -v data/resources/guitar.mp4 -s data/results/guitar.mp4 -a 20 -lo 72 -ho 92
+# Magnify string vibrations in a guitar video using 4 CPU threads / 放大吉他拨弦的微波运动 (使用 4 线程)
+uv run python src/evm_phase.py -v data/resources/guitar.mp4 -s data/results/guitar.mp4 -a 20 -lo 72 -ho 92 -t 4
 ```
 
 ## References / 参考文献
