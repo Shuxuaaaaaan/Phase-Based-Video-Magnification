@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "cupy-cuda12x>=14.0.1",
+    "cupy-cuda12x>=14.0.1; platform_machine == 'x86_64' or platform_machine == 'AMD64'",
     "numpy>=2.4.2",
     "opencv-python>=4.13.0.92",
     "py-cpuinfo>=9.0.0",

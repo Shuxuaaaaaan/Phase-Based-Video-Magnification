@@ -40,6 +40,39 @@ uv sync
 uv run python src/evm_phase.py -v <video_path> -s <saving_path> [options]
 ```
 
+## Docker Deployment / 容器化部署
+
+The project includes a multi-architecture `Dockerfile`, a `docker-compose.yml`, and an automated PowerShell script to build container images for both AMD64 (Desktop/Server) and ARM64 (Raspberry Pi/Mac M-Series). CuPy dependency is dynamically skipped on ARM64 builds.
+本项目内置了多架构 `Dockerfile`，`docker-compose.yml` 以及一键构建脚本，用以双平台输出 AMD64 与 ARM64 的静态镜像。CuPy (CUDA) 依赖在 ARM64 平台上会被自动安全跳过。
+
+**1. Create Images / 跨平台构建镜像:**
+
+```powershell
+# Requires Docker Desktop running buildx / 需要开启 Docker Desktop
+./build_docker_images.ps1
+```
+This will cleanly cross-compile and generate two static images: `docker_images/evm-phase-app_amd64.tar` and `evm-phase-app_arm64.tar`.
+
+**2. Deploy with Docker Compose / 部署与执行:**
+
+Transfer the `.tar` image and the `docker-compose.yml` to your target device, then load and run:
+将在步骤一生成的镜像压缩包和根目录的 `docker-compose.yml` 传输到您的目标设备（如树莓派）上。
+
+```bash
+# Example for ARM64 (Raspberry Pi / Mac):
+# 1. Load the archive into docker / 载入本地镜像
+docker load -i docker_images/evm-phase-app_arm64.tar
+
+# 2. Tag the loaded image so docker-compose recognizes it / 为镜像打上本地标签以匹配 compose 配置
+docker tag evm-phase-app:local-arm64 evm-phase-app:local
+
+# 3. Run the application logic via Compose / 使用 compose 运行放大算法
+docker compose run --rm evm-app -v data/resources/guitar.mp4 -s data/results/out.mp4 -a 20 -lo 72 -ho 92 -t 1 -acc cpu
+```
+> [!NOTE]
+> When using Docker Compose, the `./data` directory from your host machine is automatically mounted to `/app/data` inside the container. Place your videos in `data/resources` and retrieve results from `data/results`. 
+> > If you want to use Nvidia CUDA acceleration on an AMD64 Linux machine, ensure the `nvidia-container-toolkit` is installed, and uncomment the `deploy.resources` block inside the `docker-compose.yml` file.
+
 ### Arguments / 参数
 
 | Argument / 参数 | Short / 缩写 | Description / 说明 | Default / 默认值 |

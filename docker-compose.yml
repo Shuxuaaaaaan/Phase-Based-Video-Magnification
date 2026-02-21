@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  evm-app:
+    image: evm-phase-app:local
+    restart: "no"
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Uncomment the lines below to enable NVIDIA GPU access in Docker
+            # - driver: nvidia
+            #   count: 1
+            #   capabilities: [gpu]
+            # The default command is to show help. 
+            # Override this by running: docker compose run evm-app -v data/resources/guitar.mp4 -s data/results/out.mp4 ...
+    command: [ "-h" ]
