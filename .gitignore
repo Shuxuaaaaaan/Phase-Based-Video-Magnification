@@ -64,3 +64,7 @@ target/
 
 # Docker images
 docker_images/
+
+# IDE
+.idea/
+.vscode/
