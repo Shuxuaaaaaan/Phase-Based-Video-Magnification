@@ -24,7 +24,8 @@ COPY data/ ./data/
 
 # Initialize uv sync. 
 # It will skip cupy on arm64 and install it on amd64 based on the pyproject.toml marker
-RUN uv sync --frozen --no-cache
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
 
 # Entrypoint default runs help. Can be overwritten safely.
 ENTRYPOINT ["uv", "run", "python", "src/evm_phase.py"]
